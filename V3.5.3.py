@@ -24,7 +24,10 @@ font3b = ("Arial", 16, "bold")
 font4b = ("Arial", 14, "bold")
 
 # Параметры подключения к базе данных
-DB_HOST = '192.168.0.10'
+if os.popen("hostname").read().strip() == "cybstation":
+    DB_HOST = "192.168.88.200"
+else:
+    DB_HOST = "192.168.0.10"
 DB_USER = 'workshop'
 DB_PASSWORD = 'w0rK5h0p'
 DB_NAME = 'workshop'
@@ -499,7 +502,7 @@ class Application:
 
         style = ttk.Style()
         style.configure("Treeview", font=font3, rowheight=30)
-        style.configure("Treeview.Heading", font=font3b)
+        style.configure("Treeview.Heading", font=font4)
 
         tree_frame = tk.Frame(self.workers_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True)

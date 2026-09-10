@@ -10,7 +10,7 @@ from datetime import datetime
 from PIL import Image, ImageTk, ImageFile
 
 # Разрешаем загрузку обрезанных JPEG
-ImageFile.LOAD_TRUNCATED_IMAGES = True
+PIL.ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Tk шрифты
 font0 = ("Play", 36, "bold")
@@ -33,9 +33,7 @@ DB_PASSWORD = 'w0rK5h0p'
 DB_NAME = 'workshop'
 DB_CHARSET = 'utf8'
 
-# ----------------------------------------------------------------------
 # Определение операционной системы и настройка путей
-# ----------------------------------------------------------------------
 if sys.platform == 'linux':
     LOG_FILE = 'work.log'
     image_folder = r"/mnt/smb/ПВХ/JPG"

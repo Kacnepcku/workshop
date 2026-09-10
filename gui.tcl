@@ -1,7 +1,7 @@
 #!/usr/bin/wish8.6
 # =========================================
 # Workshop GUI на Tcl/Tk с поддержкой PNG
-# Версия: 0.7.7 
+# Версия: 0.8.1 
 # =========================================
 
 set debug_file "workshop_gui_debug.log"
@@ -13,12 +13,6 @@ proc debug {msg} {
 }
 
 debug "=== Запуск gui.tcl ==="
-
-#set FONT_TITLE {"Play" 11}
-#set FONT_INFO {"Play" 12}
-#set FONT_NORMAL {"Play" 11}
-#set FONT_INPUT {"Play" 12}
-#set FONT_BOLD {"Play" 11 bold}
 
 set FONT_TITLE {"Sans" 11}
 set FONT_INFO {"Sans" 14}
@@ -186,6 +180,7 @@ proc _draw_stub {message} {
 
 proc update_info {text} {
     ## Заменяем \n на реальные переводы строк
+    #! TODO: переделать в баше: вывод инфы без /n 
     set text [string map {\\n \n} $text]
     debug "update_info: $text"
     .right.info.text.widget configure -state normal

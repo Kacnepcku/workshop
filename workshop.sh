@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================
 # Workshop - автоматизация производства ROSHAN
-# Версия: 0.7.8 Исправление логики начала обработки изделия
+# Версия: 0.8.1 Исправление логики начала обработки изделия
 # ============================================
 
 ### ====== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ И НАСТРОЙКИ =======
@@ -49,7 +49,7 @@ log() {
     local level="${2:-INFO}"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo "$timestamp - [$level] - $message" >> "$LOG_FILE"
-    
+
     if [[ "$level" == "ERROR" ]]; then
         echo "ERROR: $message" >&2
     elif [[ "$level" == "WARNING" ]]; then
@@ -89,12 +89,12 @@ check_result() {
 emf_to_png() {
     EMF="${EMF_PATH}/${zakaz}(${konid}).emf"
     log "Конвертация EMF в PNG: $EMF"
-    
+
     if [ ! -f "$EMF" ]; then
         log "Файл EMF не найден: $EMF" "WARNING"
         return 1
     fi
-    
+
     inkscape --export-width=1280 --export-height=1080 --export-type=png --export-filename=- "$EMF" 2>/dev/null | \
     convert png:- -crop 100%x100%+0+50 "$VIEW_PNG" 2>/dev/null || {
         log "Ошибка конвертации EMF в PNG" "ERROR"
@@ -214,22 +214,22 @@ read_start_sql() {
     cur_ip=$(hostname -I | awk '{print $1}')
     myid=$(echo "$cur_ip" | awk -F'.' '{print $NF}')
     #myid=201
-	
+
     log "Определен myid: $myid (из IP: $cur_ip)"
-    
+
     time_out=$(eval "$SQL_CONNECT \"SELECT MIN_T FROM WORKPLACE WHERE IP=$myid;\"")
     check_result "SELECT MIN_T" || return 1
-    
+
     wsgroup=$(eval "$SQL_CONNECT \"SELECT GR FROM WORKPLACE WHERE IP=$myid;\"")
     check_result "SELECT GR" || return 1
-    
+
     wshost=$(eval "$SQL_CONNECT \"SELECT NAME FROM WORKPLACE WHERE IP=$myid;\"")
     check_result "SELECT NAME" || return 1
-    
+
     ## Новые поля для работников
     wkr_max=$(eval "$SQL_CONNECT \"SELECT RAB_MAX FROM WORKPLACE WHERE IP=$myid;\"")
     check_result "SELECT RAB_MAX" || return 1
-    
+
     ## Сбрасываем текущее количество работников при старте (на случай перезапуска)
     local reset_sql="UPDATE WORKPLACE SET RAB_CUR=0 WHERE IP=$myid;"
     eval "$SQL_CONNECT \"$reset_sql\""
@@ -244,43 +244,43 @@ read_start_sql() {
     #fio_list=$(eval "$SQL_CONNECT \"SELECT w.FIO FROM WORKER_TIME wt INNER JOIN WORKER w ON wt.RAB=w.RAB WHERE wt.IP=$myid AND wt.TIME_END_W IS NULL;\"")
 	#fio_list=$(eval "$SQL_CONNECT \"SELECT GROUP_CONCAT(w.FIO ORDER BY w.FIO SEPARATOR ', ') AS result FROM WORKER_TIME wt INNER JOIN WORKER w ON wt.RAB=w.RAB WHERE wt.IP=$myid AND wt.TIME_END_W IS NULL;\"")
     #check_result "SELECT w.FIO" || return 1
-    
+
 	log "Данные рабочего места загружены: $wshost (IP: $myid, группа: $wsgroup, таймаут: $time_out, макс. работников: $wkr_max)"
     return 0
 }
 
 read_zakaz_sql() {
     log "Чтение данных заказа для детали: $shtrih_clean"
-    
+
     if [ -z "$shtrih_clean" ]; then
         log "Пустой штрих-код для чтения заказа" "ERROR"
         return 1
     fi
-    
+
     zakaz=$(eval "$SQL_CONNECT \"SELECT zaknum FROM CCALC WHERE CCALC.DETAL='$shtrih_clean';\"")
     check_result "SELECT zaknum" || return 1
-    
+
     konname=$(eval "$SQL_CONNECT \"SELECT konname FROM CCALC WHERE CCALC.DETAL='$shtrih_clean';\"")
     check_result "SELECT konname" || return 1
-    
+
     konid=$(eval "$SQL_CONNECT \"SELECT konid FROM CCALC WHERE CCALC.DETAL='$shtrih_clean';\"")
     check_result "SELECT konid" || return 1
-    
+
     my_info=$(eval "$SQL_CONNECT \"SELECT PRIMPROIZV FROM CCALC WHERE CCALC.DETAL='$shtrih_clean';\"")
     check_result "SELECT PRIMPROIZV" || return 1
-    
+
     kcolor=$(eval "$SQL_CONNECT \"SELECT matcolor FROM CCALC WHERE CCALC.DETAL='$shtrih_clean';\"")
     check_result "SELECT matcolor" || return 1
-    
+
     work_type=$(eval "$SQL_CONNECT \"SELECT GR FROM WORKPLACE WHERE WORKPLACE.IP='$myid';\"")
     check_result "SELECT GR" || return 1
-    
+
     obj_id=$(eval "$SQL_CONNECT \"SELECT OBJID FROM CCALC WHERE CCALC.DETAL='$shtrih_clean';\"")
     check_result "SELECT OBJID" || return 1
-    
+
     zak_id=$(eval "$SQL_CONNECT \"SELECT ZAKID FROM CCALC WHERE CCALC.DETAL='$shtrih_clean';\"")
     check_result "SELECT ZAKID" || return 1
-    
+
     sql_table1=$(eval "$SQL_CONNECT \"SELECT LEFT(REPLACE(CASE WHEN LEFT(NAME,1)='*' THEN MID(NAME,3) ELSE NAME END,' ','_'),50) AS NAME, ROUND(L,0) AS L, ROUND(L,0) AS H, NAPRNAME FROM CCALC_FRN WHERE ZAKID='$zak_id' AND KONID='$konid';\"")
     check_result "SELECT CCALC_FRN" || return 1
 
@@ -290,7 +290,7 @@ read_zakaz_sql() {
 	#fio_list=$(eval "$SQL_CONNECT \"SELECT w.FIO FROM WORKER_TIME wt INNER JOIN WORKER w ON wt.RAB=w.RAB WHERE wt.IP=$myid AND wt.TIME_END_W IS NULL;\"")
     #fio_list=$(eval "$SQL_CONNECT \"SELECT GROUP_CONCAT(w.FIO ORDER BY w.FIO SEPARATOR ', ') AS result FROM WORKER_TIME wt INNER JOIN WORKER w ON wt.RAB=w.RAB WHERE wt.IP=$myid AND wt.TIME_END_W IS NULL;\"")
     #check_result "SELECT w.FIO" || return 1
-    
+
     log "Данные заказа загружены: Заказ: $zakaz, Контрагент: $konname, ID: $konid"
     return 0
 }
@@ -305,16 +305,16 @@ write_detal_time() {
 
 chek_detal_end() {
     log "Проверка завершения обработки детали: $shtrih_clean"
-    
+
     if [ -z "$shtrih_clean" ]; then
         log "Пустой штрих-код для проверки" "ERROR"
         return 1
     fi
-    
+
     local query="SELECT EXISTS (SELECT 1 FROM DETAL_TIME WHERE DETAL='$shtrih_clean' AND GR=$wsgroup AND TIME_END_D IS NOT NULL);"
     chek_end=$(eval "$SQL_CONNECT \"$query\"")
     check_result "SELECT EXISTS DETAL_TIME"
-    
+
     log "Результат проверки детали $shtrih_clean: $chek_end"
     return $chek_end
 }
@@ -348,17 +348,17 @@ wkr_check() {
 wkr_adreg() {
     local wkr_id="$1"
     local dt=$(date +'%F %T')
-    
+
     # Вставляем запись о начале смены
     local sql_insert="INSERT INTO WORKER_TIME (RAB, IP, TIME_START_W) VALUES ('$wkr_id', '$myid', '$dt');"
     eval "$SQL_CONNECT \"$sql_insert\""
     check_result "Регистрация работника $wkr_id" || return 1
-    
+
     # Увеличиваем счётчик на рабочем месте
     local sql_update="UPDATE WORKPLACE SET RAB_CUR = RAB_CUR + 1 WHERE IP = $myid;"
     eval "$SQL_CONNECT \"$sql_update\""
     check_result "Увеличение RAB_CUR" || return 1
-    
+
     # Обновляем локальную переменную (для логов пригодится)
     wkr_cur=$((wkr_cur + 1))
     log "Работник $wkr_id зарегистрирован на месте $myid (теперь $wkr_cur из $wkr_max)"
@@ -369,17 +369,17 @@ wkr_unreg() {
     local wkr_id="$1"
     local ip="$2"   # IP рабочего места, где он сейчас
     local dt=$(date +'%F %T')
-    
+
     # Закрываем открытую запись
     local sql_update="UPDATE WORKER_TIME SET TIME_END_W='$dt' WHERE RAB='$wkr_id' AND TIME_END_W IS NULL AND TIME_START_W > CURDATE();"
     eval "$SQL_CONNECT \"$sql_update\""
     check_result "Снятие регистрации работника $wkr_id" || return 1
-    
+
     # Уменьшаем счётчик на том рабочем месте, откуда он уходит
     local sql_decr="UPDATE WORKPLACE SET RAB_CUR = RAB_CUR - 1 WHERE IP = $ip;"
     eval "$SQL_CONNECT \"$sql_decr\""
     check_result "Уменьшение RAB_CUR" || return 1
-    
+
     # Если это текущее рабочее место, обновим локальную переменную
     if [ "$ip" = "$myid" ]; then
         wkr_cur=$((wkr_cur - 1))
@@ -391,7 +391,7 @@ wkr_unreg_all() {
 	local sql_update="UPDATE WORKER_TIME SET TIME_END_W=NOW() WHERE IP=$myid AND TIME_END_W IS NULL;"
     eval "$SQL_CONNECT \"$sql_update\""
     check_result "Закрытие всех смен" || return 1
-    
+
 }
 
 ### ============ БИЗНЕС-ЛОГИКА =============
@@ -418,18 +418,18 @@ check_input() {
     #local shtrih_code="$1"
     #shtrih_clean=$shtrih_code
 	shtrih_clean=$1
-    
+
     if [ -z "$shtrih_clean" ]; then
         log "Пустой ввод" "WARNING"
         return
     fi
-    
+
     if [ ${#shtrih_clean} -lt 3 ]; then
         log "Слишком короткий штрих-код: $shtrih_clean" "WARNING"
         send_gui_cmd "show_alert { НЕКОРРЕКТНЫЙ ШТРИХКОД }"
         return
     fi
-    
+
     case "$shtrih_clean" in
         12345*)
 			switch_off
@@ -439,7 +439,7 @@ check_input() {
 			### -----------------------------------------------
             log "Обработка штрих-кода работника: $shtrih_clean"
             local wkr_id="$shtrih_clean"
-            
+
             # Проверяем, где сейчас зарегистрирован этот работник
             local wkr_ip=$(wkr_check "$wkr_id")
             local check_res=$?
@@ -448,11 +448,11 @@ check_input() {
                 send_gui_cmd "show_alert { ОШИБКА БД }"
                 return
             fi
-            
+
             # Получаем текущее количество работников на нашем месте
             local cur_count=$(eval "$SQL_CONNECT \"SELECT RAB_CUR FROM WORKPLACE WHERE IP=$myid;\"")
             check_result "SELECT RAB_CUR" || return 1
-            
+
             if [ -n "$wkr_ip" ]; then
                 # Работник уже где-то зарегистрирован
                 if [ "$wkr_ip" = "$myid" ]; then
@@ -464,7 +464,7 @@ check_input() {
                 else
                     # Он на другом месте – сначала снимаем его оттуда, потом регистрируем здесь (если есть места)
                     log "Работник $wkr_id сейчас на месте $wkr_ip, перемещаем"
-                    
+
                     # Проверяем, есть ли места у нас
                     if [ $cur_count -lt $wkr_max ]; then
                         # Сначала снимаем с того места
@@ -490,10 +490,10 @@ check_input() {
             fi
             ;;
 
-        016*) 
+        016*)
             # Штрих-код изделия
             log "Обработка штрих-кода изделия: $shtrih_clean"
-            
+
             # Проверяем таймаут
             local current_time=$(date +%s)
             if [ $time_start_s -ne 0 ] && [ $((current_time - time_start_s)) -gt $time_out ]; then
@@ -504,15 +504,15 @@ check_input() {
                 #reset_variables
                 time_start_s=0
             fi
-            
+
             if [ $time_start_s -eq 0 ]; then
                 # Новая обработка
                 log "Начало обработки новой детали"
-                
+
                 # Проверяем, не обработана ли уже деталь
                 chek_detal_end
                 local check_result=$?
-                
+
                 if [ $check_result -eq 0 ]; then
                     # Деталь еще не обработана
                     time_start_s=$(date +%s)
@@ -520,7 +520,7 @@ check_input() {
                         write_detal_time "$shtrih_clean"
                         detal_cur="$shtrih_clean"
                         log "Успешная регистрация изделия: $detal_cur"
-                        
+
                         # Конвертируем EMF
                         #emf_to_svg
                         emf_to_png
@@ -546,7 +546,7 @@ check_input() {
             return
             ;;
     esac
-    
+
     set_focus_to_input
 }
 
@@ -555,7 +555,7 @@ update_gui_interface() {
     check_result "SELECT w.FIO" || return 1
     local list_zakaz=" Участок: $wshost\n\n Заказ: $zakaz\n\n Конструкция: $konname\n\n Цвет: $kcolor\n\n Примечание: $my_info\n\n $fio_list"
     send_gui_cmd "update_info {$list_zakaz}"
-    
+
     # Таблица 1: формируем список списков
     if [ -n "$sql_table1" ]; then
         local table1_data=""
@@ -568,7 +568,7 @@ update_gui_interface() {
     else
         send_gui_cmd "update_table1 {}"
     fi
-    
+
     # Таблица 2
     if [ -n "$sql_table2" ]; then
         local table2_data=""
@@ -579,18 +579,18 @@ update_gui_interface() {
     else
         send_gui_cmd "update_table2 {}"
     fi
-    
+
     if [ -f "$VIEW_PNG" ]; then
         send_gui_cmd "load_png {$VIEW_PNG}"
     fi
-    
+
     send_gui_cmd "set_focus"
     set_focus_to_input
 }
 
 work_in() {
     log "Запуск основного рабочего цикла с GUI"
-    
+
     while true; do
         if barcode=$(read_barcode_from_gui 1); then
             if [ "$barcode" = "EXIT" ]; then
@@ -605,12 +605,12 @@ work_in() {
 
 cleanup() {
     log "Завершение работы, очистка..."
-    
+
     if [ -n "$detal_cur" ] && [ $time_start_s -ne 0 ]; then
         log "Завершение обработки детали при выходе: $detal_cur"
         write_detal_end "$detal_cur"
     fi
-    
+
     cleanup_gui
     log "Работа завершена"
 }
@@ -619,30 +619,30 @@ cleanup() {
 
 main() {
     log "=== Запуск приложения Workshop с Tcl/Tk GUI (coproc) ==="
-    
+
     if ! check_db_connection; then
         error_exit "DB" "Нет подключения к базе данных"
     fi
-    
+
     if ! read_start_sql; then
         error_exit "DB" "Ошибка загрузки данных рабочего места"
     fi
-    
+
     init_gui
-    
+
     trap 'log "Получен сигнал завершения"; cleanup; exit 0' SIGINT SIGTERM
     trap 'log "Критическая ошибка: $BASH_COMMAND"; cleanup; exit 1' ERR
-    
+
     reset_variables
     update_gui_interface
     work_in
-    
+
     cleanup
 }
 
 log "========================================="
 log "Запуск Workshop с Tcl/Tk GUI"
-log "Версия: 0.7.8"
+log "Версия: 0.8.1"
 log "Дата: $(date)"
 log "Директория: $WSHP_DIR"
 log "========================================="

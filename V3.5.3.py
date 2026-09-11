@@ -10,7 +10,7 @@ from datetime import datetime
 from PIL import Image, ImageTk, ImageFile
 
 # Разрешаем загрузку обрезанных JPEG
-PIL.ImageFile.LOAD_TRUNCATED_IMAGES = True
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Tk шрифты
 font0 = ("Play", 36, "bold")
@@ -356,7 +356,7 @@ class Application:
         y = (dialog.winfo_screenheight() - 250) // 2
         dialog.geometry(f"+{x}+{y}")
 
-        frame = tk.Frame(dialog, bd=0, relief='raised')
+        frame = tk.Frame(dialog, bd=0, relief='flat')
         frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         self.conn_label = tk.Label(frame, text="Подключение к БД ...",
@@ -492,7 +492,7 @@ class Application:
         self.stats_line2.pack(fill=tk.X, padx=10, pady=2, anchor='w')
         self.stats_line3.pack(fill=tk.X, padx=10, pady=2, anchor='w')
 
-        ttk.Separator(self.left_frame, orient='horizontal').pack(fill=tk.X, padx=10, pady=5)
+        #ttk.Separator(self.left_frame, orient='horizontal').pack(fill=tk.X, padx=10, pady=5)
 
         # Таблица сотрудников
         self.workers_frame = ttk.LabelFrame(self.left_frame, text="Сотрудники на рабочем месте", padding=5)
@@ -525,18 +525,18 @@ class Application:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree_workers.config(yscrollcommand=scrollbar.set)
 
-        # Нижняя панель: поле ввода для сканера
+        # Нижняя панель: поле ввода для сканера (выровнено по правому краю)
         bottom_frame = tk.Frame(self.left_frame)
         bottom_frame.pack(pady=10, fill=tk.X)
 
-        self.entry_label = tk.Label(bottom_frame, text="Штрих-код:", font=font4)
-        self.entry_label.pack(side=tk.LEFT, padx=10)
-
         self.entry = tk.Entry(bottom_frame, font=font3, width=25)
-        self.entry.pack(side=tk.LEFT, padx=10)
+        self.entry.pack(side=tk.RIGHT, padx=10)
         self.entry.bind("<Return>", self.on_scan)
         self.entry.focus_set()
 
+        self.entry_label = tk.Label(bottom_frame, text="Штрих-код:", font=font4)
+        self.entry_label.pack(side=tk.RIGHT, padx=10)
+        
         # Правая часть – графика
         bg_color = self.root.cget('bg')
         self.image_label = tk.Label(self.right_frame, bg=bg_color)
@@ -583,11 +583,11 @@ class Application:
         win.grab_set()
 
         border_color = "red" if msg_type == 'error' else "green"
-        frame = tk.Frame(win, bd=5, relief='raised',
+        frame = tk.Frame(win, bd=5, relief='flat',
                          highlightbackground=border_color,
                          highlightcolor=border_color,
-                         highlightthickness=3)
-        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+                         highlightthickness=5)
+        frame.pack(fill=tk.BOTH, expand=True, padx=3, pady=3)
 
         lbl = tk.Label(frame, text=message, font=font1b,
                        justify='center', wraplength=550)

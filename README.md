@@ -1,17 +1,18 @@
 # workshop
 
-# main.py
+* main.py
 
 Переменные, настройки и запуск
 
-# db.py
+* db.py
 
 Работа с базой данных
 
-# app.py
+* app.py
 
 Отдельные классы вместо одного огромного.
 
+[code]
 class Notifier:
     def notify(self, message, level='info', title=None, timeout=5000): ...
     def show_auto_message(self, message, title, timeout, msg_type): ...
@@ -58,3 +59,4 @@ class InputHandler:
 
 class Application:
     def __init__(self, root):
+[/code]

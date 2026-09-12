@@ -3,6 +3,7 @@
 
 import os
 import sys
+import subprocess
 import tkinter as tk
 from datetime import datetime
 from app import Application
@@ -18,23 +19,15 @@ font2b = ("Arial", 18, "bold")
 font3b = ("Arial", 16, "bold")
 font4b = ("Arial", 14, "bold")
 
-# Параметры подключения к БД ====================================================================
-if os.popen("hostname").read().strip() == "cybstation":
-    DB_HOST = "192.168.88.200"
-else:
-    DB_HOST = "192.168.0.10"
-
-DB_USER     = 'workshop'
-DB_PASSWORD = 'w0rK5h0p'
-DB_NAME     = 'workshop'
-DB_CHARSET  = 'utf8'
-
 # Определение ОС и путей ========================================================================
 if sys.platform == 'linux':
     LOG_FILE     = 'work.log'
     image_folder = r"/mnt/smb/ПВХ/JPG"
     power_off    = "systemctl poweroff"
-    MY_IP        = os.popen("hostname -I | awk -F'.' '{print $NF}'").read().strip()
+    MY_IP        = subprocess.run(
+                        "hostname -I | awk -F'.' '{print $NF}'",
+                        shell=True, capture_output=True, text=True
+                        ).stdout.strip()
 elif sys.platform == 'win32':
     LOG_FILE     = 'test.log'
     image_folder = r"\\synas\work\ПBX\JPG"
@@ -42,6 +35,17 @@ elif sys.platform == 'win32':
     MY_IP        = '99'
 else:
     sys.exit(0)
+
+# Параметры подключения к БД ====================================================================
+if subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip() == "cybstation":
+    DB_HOST = "192.168.88.200"
+else:
+    DB_HOST = "192.168.0.10"
+    
+DB_USER     = 'workshop'
+DB_PASSWORD = 'w0rK5h0p'
+DB_NAME     = 'workshop'
+DB_CHARSET  = 'utf8'
 
 # Константы приложения ==========================================================================
 CODE_POWEROFF  = '12345'    # код сканирования для выключения ПК

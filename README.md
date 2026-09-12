@@ -1,15 +1,17 @@
 # workshop
 
-## main.py
+## КПП 
+В цеху kpp-old/V3.5
 
+Тестируем 3.5.4 
+
+### main.py
 Переменные, настройки и запуск
 
-## db.py
-
+### db.py
 Работа с базой данных
 
-## app.py
-
+### app.py
 Отдельные классы вместо одного огромного.
 
 ```
@@ -60,3 +62,5 @@ class InputHandler:
 class Application:
     def __init__(self, root):
 ```
+## Безбумажка
+wshp-0.8.1

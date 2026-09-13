@@ -6,7 +6,6 @@ import sys
 import subprocess
 import tkinter as tk
 from datetime import datetime
-from app import Application
 
 # Шрифты Tk =====================================================================================
 font0  = ("Play", 36, "bold")   # название рабочего места
@@ -70,6 +69,7 @@ def log_message(message):
         print(f"Ошибка записи лога: {e}")
 
 def main():
+    from app import Application
     root = tk.Tk()
     Application(root)
     root.mainloop()

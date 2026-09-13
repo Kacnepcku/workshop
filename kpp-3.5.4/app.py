@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 
 """
-app.py — главный модуль приложения.
-
 Класс Application — тонкий координатор. Вся работа разнесена по менеджерам:
 
     Notifier              — логирование и всплывающие сообщения
@@ -23,18 +21,13 @@ import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk, ImageFile
 from main import (
-    # шрифты
     font0, font1, font2, font3, font4,
     font1b, font2b, font3b, font4b,
-    # БД
     DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_CHARSET,
-    # пути и ОС
     image_folder, power_off, MY_IP,
-    # константы
     CODE_POWEROFF, PREFIX_WORKER,
     GRI_IMPOST, GRI_FRAME, GRI_SASH,
     AUTO_UPDATE_MS, RECONNECT_MS,
-    # логирование
     log_message,
 )
 import db as dbm

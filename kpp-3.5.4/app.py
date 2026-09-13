@@ -139,7 +139,7 @@ class ConnectionManager:
         frame = tk.Frame(dialog, bd=0, relief='flat')
         frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        self.conn_label = tk.Label(frame, text="Подключение к БД ...",
+        self.conn_label = tk.Label(frame, text="Подключение к БД",
                                    font=font1, justify='center')
         self.conn_label.pack(pady=10)
 

@@ -1,66 +1,85 @@
-# workshop
+# Workshop
 
-## КПП 
-В цеху kpp-old/V3.5
+Рабочее место производственного персонала для учёта изготовления оконных конструкций (рамы / створки).
 
-Тестируем 3.5.4 
+## Описание
 
-### main.py
-Переменные, настройки и запуск
+Настольное приложение на Python с графическим интерфейсом (Tkinter) для:
 
-### db.py
-Работа с базой данных
+- **Учёта работников** — регистрация, перемещение между рабочими местами, завершение смены
+- **Регистрации деталей** — сканирование штрих-кода → поиск в БД → валидация группы → учёт габаритов
+- **Отображения чертежей** — автоматический показ изображений конструкций из сетевой папки
+- **Статистики смены** — количество изделий, суммарный периметр, суммарная площадь
+- **Безбумажного документооборота** — Tcl/Tk-интерфейс для печати
 
-### app.py
-Отдельные классы вместо одного огромного.
+## Архитектура
 
 ```
-class Notifier:
-    def notify(self, message, level='info', title=None, timeout=5000): ...
-    def show_auto_message(self, message, title, timeout, msg_type): ...
-
-class ConnectionManager:
-    def show_connection_dialog(self): ...
-    def attempt_connection(self): ...
-
-class UIBuilder:
-    def build(self): ...               # init_ui + все _create_*
-    def clear_detal_info(self): ...
-    def set_detal_info(self, ...): ...
-
-class StatsPanel:
-    def update(self): ...
-
-class ImageDisplay:
-    def show_default(self): ...
-    def update(self, zaknum, konid): ...
-    def display(self, img): ...
-    def on_resize(self, event): ...
-
-class WorkerSessionManager:
-    def process(self, rab): ...        # ← добавлено
-    def close_previous(self): ...
-    def close_all(self): ...
-    def update_list(self): ...
-    def auto_update(self): ...         # ← добавлено
-    def _stop_worker(self, rab, fio): ...
-    def _move_worker(self, rab, fio, old_ip): ...
-    def _register_worker(self, rab, fio): ...
-
-class DetalProcessor:
-    def process(self, detal): ...
-    def _validate_group(self, gri): ...
-    def _handle_registered(self, detal, detal_info, bci, gri): ...
-    def _check_duplicate(self, bci, gri, detal): ...
-    def _register(self, detal, detal_info, bci, gri): ...
-
-class InputHandler:
-    def on_click(self, event): ...
-    def on_focus_out(self, event): ...
-    def on_scan(self, event): ...
-
-class Application:
-    def __init__(self, root):
+WorkShop/
+├── kpp-3.5.4/          # Текущая версия (рефакторинг V3.5)
+│   ├── main.py          # Точка входа, настройки окружения
+│   ├── app.py           # GUI: 8 менеджеров-классов
+│   └── db.py            # SQL-функции для MySQL
+├── kpp-old/             # Исторические версии (V3.1 → V3.5)
+│   ├── V3.1.py … V3.5.py
+└── wshp-0.8.1/          # Безбумажка (Tcl/Tk)
+    ├── workshop.sh
+    └── gui.tcl
 ```
-## Безбумажка
-wshp-0.8.1
+
+### kpp-3.5.4 — модульная архитектура
+
+| Класс | Назначение |
+|-------|------------|
+| `Notifier` | Логирование и всплывающие уведомления |
+| `ConnectionManager` | Подключение к MySQL, повторные попытки |
+| `UIBuilder` | Построение главного окна, панели ввода, дерева сотрудников |
+| `StatsPanel` | Обновление статистики смены |
+| `ImageDisplay` | Загрузка, масштабирование и показ изображений конструкций |
+| `WorkerSessionManager` | Сессии работников: старт / перемещение / стоп |
+| `DetalProcessor` | Регистрация деталей: поиск, валидация, учёт, статистика |
+| `InputHandler` | Обработка ввода со сканера штрих-кодов |
+
+## Стек
+
+- **Python 3.13** (Linux) / **Python 3.x** (Windows)
+- `tkinter` — графический интерфейс
+- `pymysql` — подключение к MySQL
+- `Pillow` — обработка изображений
+
+## Подключение к БД
+
+Данные берутся из таблицы MySQL `workshop`:
+
+```
+host: 192.168.88.200 (cybstation) или 192.168.0.10 (остальные)
+user: workshop
+db:   workshop
+```
+
+Таблицы: `WORKER` (работники), `WORKPLACE` (рабочие места), `WORKER_TIME` (сессии), `CCALC` (детали/изделия), `DEtal_TIME` (регистрация деталей).
+
+## Запуск
+
+```bash
+cd kpp-3.5.4
+python3 main.py
+```
+
+При запуске открывается модальное окно подключения — отсканируйте код для входа или дождитесь автоподключения к БД.
+
+## Управление
+
+| Действие | Как выполнить |
+|----------|---------------|
+| Зарегистрировать работника | Отсканировать штрих-код (префикс `2200`) |
+| Зарегистрировать деталь | Отсканировать код детали из БД |
+| Завершить сессию | Повторно отсканировать того же работника |
+| Выключить ПК | Отсканировать код `12345` (на экране подключения) |
+
+## Разное
+
+- **Код группы «импост»** (`3`) — не регистрируется в учёт
+- **Автообновление** списка сотрудников — каждые 60 секунд
+- **Повторное подключение** к БД — каждые 5 секунд при ошибке
+- Изображения хранятся в `/mnt/smb/ПВХ/JPG/` (Linux) или `\\synas\work\ПВХ\JPG\` (Windows)

@@ -32,7 +32,7 @@ from main import (
 )
 import db as dbm
 
-# Разрешаем загрузку обрезанных JPEG
+# Загрузка обрезанных JPG ------------
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Notifier — уведомления ==========================================================================

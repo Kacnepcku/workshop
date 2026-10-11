@@ -46,7 +46,7 @@ if sys.platform == "linux":
         shell=True, capture_output=True, text=True,
     ).stdout.strip()
 elif sys.platform == "win32":
-    # Исправлено: корректный UNC-путь (было «ПBX» и избыточное экранирование)
+    # Исправлено: корректный UNC-путь (было избыточное экранирование)
     # и современная синтаксически верная команда выключения.
     power_off = "shutdown /s /t 0"
     _default_log = "test.log"

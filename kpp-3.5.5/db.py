@@ -188,7 +188,7 @@ def get_dimensions_and_perimeter_area_for_bci_gri(cursor, bci, gri=None):
         """
         cursor.execute(
             "SELECT ORIENT, LENGTH FROM CCALC "
-            f"WHERE BCI = %s AND {where_gri_clause} AND ORIENT IN ('Н', 'П')",
+            f"WHERE BCI = %s AND {where_gri_clause} AND ORIENT IN ('В', 'П')",
             params
         )
         width_mm = height_mm = None

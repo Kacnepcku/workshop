@@ -22,12 +22,26 @@ def get_workplace_name(cursor, ip):
     return row[0] if row else str(ip)
 
 def get_workplace_info(cursor, ip):
-    """Получить информацию о рабочем месте: NAME, RAB_MAX, RAB_CUR, GR."""
+    """
+    Получить информацию о рабочем месте: NAME, RAB_MAX, GR.
+    Поле RAB_CUR больше не читается из WORKPLACE —
+    актуальное количество считается отдельно (см. get_occupied_count).
+    """
     cursor.execute(
-        "SELECT NAME, RAB_MAX, RAB_CUR, GR FROM WORKPLACE WHERE IP = %s",
+        "SELECT NAME, RAB_MAX, GR FROM WORKPLACE WHERE IP = %s",
         (ip,)
     )
     return cursor.fetchone()
+
+def get_occupied_count(cursor, ip):
+    """Количество открытых сессий на данном IP за сегодня (аналог RAB_CUR)."""
+    cursor.execute(
+        "SELECT COUNT(*) FROM WORKER_TIME "
+        "WHERE IP = %s AND TIME_END_W IS NULL "
+        "AND DATE(TIME_START_W) = CURDATE()",
+        (ip,)
+    )
+    return cursor.fetchone()[0]
 
 def get_open_session(cursor, rab):
     """Найти открытую сессию сотрудника за сегодня."""
@@ -52,21 +66,6 @@ def create_session(cursor, rab, ip):
         "INSERT INTO WORKER_TIME (RAB, IP, TIME_START_W, TIME_END_W) "
         "VALUES (%s, %s, NOW(), NULL)",
         (rab, ip)
-    )
-
-def decrement_workplace_cur(cursor, ip):
-    """Уменьшить счётчик занятых мест на рабочем месте."""
-    cursor.execute(
-        "UPDATE WORKPLACE SET RAB_CUR = RAB_CUR - 1 WHERE IP = %s AND RAB_CUR > 0",
-        (ip,)
-    )
-    return cursor.rowcount > 0
-
-def increment_workplace_cur(cursor, ip):
-    """Увеличить счётчик занятых мест на рабочем месте."""
-    cursor.execute(
-        "UPDATE WORKPLACE SET RAB_CUR = RAB_CUR + 1 WHERE IP = %s",
-        (ip,)
     )
 
 def get_current_workers(cursor, ip):

@@ -199,7 +199,8 @@ class UIBuilder:
                         level='error')
             sys.exit(1)
 
-        app.workplace_name, app.rab_max, app.rab_cur, app.gr = workplace
+        app.workplace_name, app.rab_max, app.gr = workplace
+        app.rab_cur = dbm.get_occupied_count(app.cursor, app.current_ip)
         init_log(app.workplace_name)
         log_message(f"Рабочее место: {app.workplace_name}, GR={app.gr}, "
                     f"RAB_MAX={app.rab_max}, RAB_CUR={app.rab_cur}")
@@ -574,17 +575,6 @@ class WorkerSessionManager:
                 log_message("Нет зависших сессий сотрудников за предыдущие дни.")
                 return
 
-            # RAB_CUR до закрытия
-            ips_in_sessions = list(set(ip for _, ip, _ in sessions))
-            rab_cur_before = {}
-            for ip in ips_in_sessions:
-                app.cursor.execute(
-                    "SELECT RAB_CUR FROM WORKPLACE WHERE IP = %s", (ip,)
-                )
-                row = app.cursor.fetchone()
-                rab_cur_before[ip] = row[0] if row else None
-                log_message(f"RAB_CUR до закрытия: IP={ip}, RAB_CUR={rab_cur_before[ip]}")
-
             count = 0
             for rab, ip, start_time in sessions:
                 # Время последней детали на этом IP за день открытия сессии
@@ -606,23 +596,11 @@ class WorkerSessionManager:
                     "WHERE RAB = %s AND IP = %s AND TIME_END_W IS NULL",
                     (close_time, rab, ip)
                 )
-                dbm.decrement_workplace_cur(app.cursor, ip)
                 count += 1
                 log_message(f"Закрыта сессия сотрудника {rab} на IP {ip} "
                             f"(время окончания {close_time})")
 
             app.conn.commit()
-
-            # RAB_CUR после закрытия
-            for ip in ips_in_sessions:
-                app.cursor.execute(
-                    "SELECT RAB_CUR FROM WORKPLACE WHERE IP = %s", (ip,)
-                )
-                row = app.cursor.fetchone()
-                rab_cur_after = row[0] if row else None
-                log_message(f"RAB_CUR после закрытия: IP={ip}, "
-                            f"было={rab_cur_before[ip]}, стало={rab_cur_after}")
-
             log_message(f"Закрыто {count} сессий сотрудников за предыдущие дни")
 
             if count > 0:
@@ -652,8 +630,6 @@ class WorkerSessionManager:
             count = 0
             for (rab,) in sessions:
                 dbm.close_session(app.cursor, rab)
-                if not dbm.decrement_workplace_cur(app.cursor, app.current_ip):
-                    log_message(f"Не удалось уменьшить RAB_CUR для сотрудника {rab}")
                 count += 1
                 log_message(f"Закрыта сессия сотрудника {rab} на IP "
                             f"{app.current_ip} (время закрытия NOW())")
@@ -678,21 +654,17 @@ class WorkerSessionManager:
                 hours   = total_sec // 3600
                 minutes = (total_sec % 3600) // 60
                 time_str = f"{hours}ч {minutes}м" if hours > 0 else f"{minutes}м"
-                app.tree_workers.insert("", "end",
-                                        values=(idx, fio, start_str, time_str))
+                app.tree_workers.insert("", "end",values=(idx, fio, start_str, time_str))
 
-            info = dbm.get_workplace_info(app.cursor, app.current_ip)
-            if info:
-                _, _, cur, _ = info
-                app.rab_cur = cur
-                app.info_label.config(
-                    text=f"Максимум сотрудников: {app.rab_max} | "
-                        f"Занято: {app.rab_cur}"
-                )
+            app.rab_cur = dbm.get_occupied_count(app.cursor, app.current_ip)
+            app.info_label.config(
+                text=f"Максимум сотрудников: {app.rab_max} | "
+                    f"Занято: {app.rab_cur}"
+            )
+
             app.entry.focus_set()
         except Exception as e:
-            app.notify(f"Не удалось обновить список сотрудников: {e}",
-                        level='error')
+            app.notify(f"Не удалось обновить список сотрудников: {e}",level='error')
 
     def auto_update(self):
         """Автоматическое обновление списка сотрудников раз в минуту."""
@@ -761,8 +733,6 @@ class WorkerSessionManager:
                 closed = dbm.close_sessions_on_ip_at_time(
                     app.cursor, app.current_ip, close_time
                 )
-                for _ in range(closed):
-                    dbm.decrement_workplace_cur(app.cursor, app.current_ip)
                 app.conn.commit()
                 log_message(f"Закрыто {closed} сессий на IP {app.current_ip}")
 
@@ -787,24 +757,21 @@ class WorkerSessionManager:
         """Закрывает сессию сотрудника на текущем рабочем месте."""
         app = self.app
         dbm.close_session(app.cursor, rab)
-        if not dbm.decrement_workplace_cur(app.cursor, app.current_ip):
-            app.conn.rollback()
-            app.notify(f"Счётчик RAB_CUR на месте {app.workplace_name} "
-                        f"уже равен 0. Операция отменена.", level='error')
-            return
         app.conn.commit()
         app.notify(f"Работник {fio} завершил работу на {app.workplace_name}.")
 
     def _move_worker(self, rab, fio, old_ip):
         """Перемещает сотрудника с другого рабочего места на текущее."""
         app = self.app
+
         info = dbm.get_workplace_info(app.cursor, app.current_ip)
         if info is None:
             app.conn.rollback()
             app.notify("Текущее рабочее место не найдено.", level='error')
             return
 
-        name, max_cur, cur_cur, _ = info
+        name, max_cur, _ = info
+        cur_cur = dbm.get_occupied_count(app.cursor, app.current_ip)
         if cur_cur >= max_cur:
             app.conn.rollback()
             app.notify(f"Место '{name}' заполнено (занято {cur_cur} из "
@@ -814,27 +781,24 @@ class WorkerSessionManager:
         old_place_name = dbm.get_workplace_name(app.cursor, old_ip)
 
         dbm.close_session(app.cursor, rab)
-        if not dbm.decrement_workplace_cur(app.cursor, old_ip):
-            app.conn.rollback()
-            app.notify("Счётчик RAB_CUR на старом месте уже равен 0. "
-                        "Операция отменена.", level='error')
-            return
         dbm.create_session(app.cursor, rab, app.current_ip)
-        dbm.increment_workplace_cur(app.cursor, app.current_ip)
         app.conn.commit()
+
         app.notify(f"Работник {fio} перемещён с '{old_place_name}' "
                     f"на '{name}'.")
 
     def _register_worker(self, rab, fio):
         """Регистрирует сотрудника на текущем рабочем месте."""
         app = self.app
+
         info = dbm.get_workplace_info(app.cursor, app.current_ip)
         if info is None:
             app.conn.rollback()
             app.notify("Текущее рабочее место не найдено.", level='error')
             return
 
-        name, max_cur, cur_cur, _ = info
+        name, max_cur, _ = info
+        cur_cur = dbm.get_occupied_count(app.cursor, app.current_ip)
         if cur_cur >= max_cur:
             app.conn.rollback()
             app.notify(f"Место '{name}' заполнено (занято {cur_cur} из "
@@ -842,8 +806,8 @@ class WorkerSessionManager:
             return
 
         dbm.create_session(app.cursor, rab, app.current_ip)
-        dbm.increment_workplace_cur(app.cursor, app.current_ip)
         app.conn.commit()
+
         app.notify(f"Работник {fio} зарегистрирован на {name}.")
 
 # DetalProcessor — регистрация деталей =============================================

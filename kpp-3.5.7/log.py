@@ -5,12 +5,14 @@
 Модуль логирования.
 
 Расположение:
-  • Основной путь: logs/ рядом с программой
-    (может быть обычной папкой или символической ссылкой)
-  • Резервный путь (если основной недоступен):
-      Linux:   /mnt/smb/1_ОБМЕН/Цех/WSHP_LOG/{MY_IP}/
-      Windows: \\synas\work\1_ОБМЕН\Цех\WSHP_LOG\{MY_IP}\
-  • Аварийный путь: logs_local/ рядом с программой
+  Linux:
+    • если logs/ не существует — пытаемся создать символическую ссылку
+      logs -> /mnt/smb/1_ОБМЕН/Цех/WSHP_LOG/{MY_IP}
+    • если ссылку создать не удалось — logs_local/ рядом с программой
+    • если logs/ существует (обычная папка или рабочая ссылка) — пишем в неё
+
+  Windows:
+    • всегда logs_local/ рядом с программой
 
 Логика файлов:
   • {workplace_name}.log — активный лог
@@ -29,54 +31,19 @@ _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Сколько последних архивов хранить для каждого рабочего места
 KEEP_ARCHIVES = 3
 
+# Сетевой путь для логов на Linux
+LINUX_NETWORK_BASE = "/mnt/smb/1_ОБМЕН/Цех/WSHP_LOG"
+
 # Текущее состояние
 _current_file = None
 _current_date = None
 
 
-def _resolve_log_dir(identifier_ip=None):
-    """
-    Определяет директорию для логов.
-
-    Приоритет:
-      1. logs/ рядом с программой (может быть символической ссылкой)
-      2. Резервный сетевой путь с {MY_IP}
-      3. Локальный logs_local/ рядом с программой
-
-    Возвращает (путь, описание).
-    """
-    # 1. Основной путь
-    primary = os.path.join(_BASE_DIR, "logs")
-    if _ensure_writable_dir(primary):
-        return primary, "primary (logs/)"
-
-    # 2. Резервный путь по IP
-    ip_suffix = identifier_ip if identifier_ip else "unknown"
-    if sys.platform == 'linux':
-        fallback = f"/mnt/smb/1_ОБМЕН/Цех/WSHP_LOG/{ip_suffix}"
-    elif sys.platform == 'win32':
-        fallback = rf"\\synas\work\1_ОБМЕН\Цех\WSHP_LOG\{ip_suffix}"
-    else:
-        fallback = None
-
-    if fallback and _ensure_writable_dir(fallback):
-        return fallback, f"fallback ({fallback})"
-
-    # 3. Аварийный локальный путь
-    local = os.path.join(_BASE_DIR, "logs_local")
-    os.makedirs(local, exist_ok=True)
-    return local, f"local ({local})"
-
-
-def _ensure_writable_dir(path):
-    """
-    Проверяет, что директория существует и доступна для записи.
-    Если её нет — пытается создать.
-    Возвращает True / False.
-    """
+def _is_writable_dir(path):
+    """Существует, является директорией и доступна на запись?"""
     try:
-        os.makedirs(path, exist_ok=True)
-        # Пробуем создать временный файл
+        if not os.path.isdir(path):
+            return False
         probe = os.path.join(path, ".__write_test__")
         with open(probe, "w"):
             pass
@@ -84,6 +51,72 @@ def _ensure_writable_dir(path):
         return True
     except OSError:
         return False
+
+
+def _try_make_symlink(link_path, target):
+    """
+    Пытается создать символическую ссылку link_path -> target.
+    Возвращает True при успехе.
+    """
+    try:
+        os.symlink(target, link_path)
+        return True
+    except OSError as e:
+        print(f"[log] Не удалось создать символическую ссылку {link_path} -> {target}: {e}")
+        return False
+
+
+def _resolve_log_dir(identifier_ip=None):
+    """
+    Определяет директорию для логов.
+
+    Linux:
+      1. Если logs/ существует и доступна — используем её.
+      2. Если logs/ нет — пробуем создать ссылку на сетевой путь.
+         • Ссылка создана и цель доступна — используем logs/.
+         • Не удалось — используем logs_local/.
+      3. Иначе — logs_local/.
+
+    Windows:
+      Всегда logs_local/.
+
+    Возвращает (путь, описание).
+    """
+    primary = os.path.join(_BASE_DIR, "logs")
+    local = os.path.join(_BASE_DIR, "logs_local")
+
+    if sys.platform == "win32":
+        os.makedirs(local, exist_ok=True)
+        return local, f"windows local ({local})"
+
+    # Linux / другие Unix-подобные
+    # 1. logs/ уже есть и доступна
+    if os.path.exists(primary):
+        if _is_writable_dir(primary):
+            return primary, f"existing logs/ ({primary})"
+        # Папка есть, но недоступна — уходим в локальную
+        os.makedirs(local, exist_ok=True)
+        return local, f"logs/ unavailable, local fallback ({local})"
+
+    # 2. logs/ нет — пробуем создать ссылку на сетевой путь
+    ip_suffix = identifier_ip if identifier_ip else "unknown"
+    target = os.path.join(LINUX_NETWORK_BASE, ip_suffix)
+
+    # Убедимся, что целевая папка существует (создать её заранее)
+    try:
+        os.makedirs(target, exist_ok=True)
+    except OSError as e:
+        print(f"[log] Не удалось создать целевую папку {target}: {e}")
+        os.makedirs(local, exist_ok=True)
+        return local, f"target unavailable, local fallback ({local})"
+
+    # Пробуем создать ссылку
+    if _try_make_symlink(primary, target) and _is_writable_dir(primary):
+        return primary, f"symlink created ({primary} -> {target})"
+
+    # 3. Не получилось — локально
+    os.makedirs(local, exist_ok=True)
+    return local, f"symlink failed, local fallback ({local})"
 
 
 def _get_filename(identifier, log_dir):
@@ -161,8 +194,8 @@ def init_log(identifier, identifier_ip=None):
     """
     Инициализирует лог для identifier (обычно workplace_name).
 
-    identifier_ip — IP (последний октет), используется только для
-    резервного пути, если основной logs/ недоступен.
+    identifier_ip — IP (последний октет), используется при создании
+    символической ссылки logs/ -> /mnt/smb/1_ОБМЕН/Цех/WSHP_LOG/{ip}.
     """
     global _current_file, _current_date
 
@@ -187,7 +220,7 @@ def init_log(identifier, identifier_ip=None):
         if _file_has_content(filename):
             archived = _archive_old_log(filename, file_date)
             if archived:
-                print(f"Лог заархивирован: {os.path.basename(archived)}")
+                print(f"[log] Старый лог заархивирован: {os.path.basename(archived)}")
         else:
             try:
                 os.remove(filename)
@@ -202,8 +235,7 @@ def init_log(identifier, identifier_ip=None):
 
     _cleanup_old_logs(identifier, log_dir)
 
-    # Служебное сообщение о расположении лога
-    print(f"[log] Используется директория: {location}")
+    print(f"[log] Директория логов: {location}")
 
 
 def log_message(message):

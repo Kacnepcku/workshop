@@ -32,7 +32,7 @@ _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KEEP_ARCHIVES = 3
 
 # Сетевой путь для логов на Linux
-LINUX_NETWORK_BASE = "/mnt/smb/1_ОБМЕН/Цех/WSHP_LOG"
+LINUX_NETWORK_BASE = "/mnt/smb/1_ОБМЕН/Цех/WSHP_LOGS"
 
 # Текущее состояние
 _current_file = None

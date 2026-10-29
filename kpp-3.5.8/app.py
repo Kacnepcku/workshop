@@ -811,22 +811,28 @@ class WorkerSessionManager:
         app.notify(f"Работник {fio} зарегистрирован на {name}.")
 
 # DetalProcessor — регистрация деталей =============================================
+# ==================================================================================
 class DetalProcessor:
     """Обработка сканирования деталей и изделий."""
 
     def __init__(self, app):
         self.app = app
 
-    # Публичная точка входа ---------------------------------------------------
+    # ------------------------------------------------------------------
+    # ПУБЛИЧНАЯ ТОЧКА ВХОДА
+    # ------------------------------------------------------------------
     def process(self, detal):
         """
         Обрабатывает сканирование детали:
         - импост (GRI='3') игнорируется;
         - для GR 1-4 разрешена только «своя» группа (r или s);
-        - для GR 5-6 разрешены и рамы, и створки, с проверкой дублей по BCI.
+        - для GR 5-6 разрешены и рамы, и створки;
+        - дубликат изделия проверяется ТОЛЬКО по BCI (для всех групп);
+        - при отказе регистрации блок информации и картинка обновляются.
         """
         app = self.app
         try:
+            # ШАГ 1. Поиск детали в CCALC
             detal_info = dbm.get_detal_full_info(app.cursor, detal)
             if detal_info is None:
                 app.notify(f"Деталь с кодом {detal} не найдена.", level='error')
@@ -837,61 +843,117 @@ class DetalProcessor:
             bci = detal_info['bci']
             gri = detal_info['gri']
 
-            # Импост не регистрируется
+            # ШАГ 2. Импост не регистрируется
             if gri == GRI_IMPOST:
                 app.notify("Для регистрации отсканируйте деталь рамы или "
-                            "створки. Импост не регистрируется.", level='warn')
+                           "створки. Импост не регистрируется.", level='warn')
                 app.conn.rollback()
                 app.ui.clear_detal_info()
                 return
 
-            # Проверка разрешённой группы для 1-4
+            # ШАГ 3. Проверка разрешённой группы (только для GR 1–4)
             if not self._validate_group(gri):
                 return
 
-            # Уже зарегистрирована именно эта деталь на этом IP?
+            # ШАГ 4. Эта же деталь уже открыта на этом IP?
+            #        → предупредить, обновить блок и картинку, не регистрировать
             if dbm.get_open_detal_session_at_ip(app.cursor, detal, app.current_ip):
                 self._handle_registered(detal, detal_info, bci, gri)
                 return
 
-            # Проверка дубликата: для 5-6 — по BCI, для 1-4 — по BCI+GRI
-            dup, dup_msg = self._check_duplicate(detal, detal_info)
-            if dup:
-                app.notify(dup_msg, level='info')
+            # ШАГ 5. Другая деталь того же изделия (BCI) уже открыта?
+            #        → отказ, обновить блок и картинку, в лог — GRI и BCI
+            if self._check_duplicate(bci, gri, detal):
+                msg = (f"Изделие {detal_info['zaknum']} "
+                       f"({detal_info['konname']}) уже зарегистрировано "
+                       f"на {app.workplace_name} (другая деталь). "
+                       f"Регистрация нового изделия невозможна.")
+                app.notify(msg, level='warn')
+                # Дополнительно в лог — GRI и BCI (для аудита)
+                log_message(
+                    f"Отказ регистрации (дубликат по BCI): "
+                    f"GRI={gri}, BCI={bci}, DETAL={detal}"
+                )
                 app.conn.rollback()
+                self._show_detal_info(detal_info, bci, gri)
                 return
 
+            # ШАГ 6. Расчёт габаритов + регистрация
             self._register(detal, detal_info, bci, gri)
+
         except Exception as e:
             app.conn.rollback()
             app.notify(f"Ошибка обработки детали: {e}", level='error')
 
-
-    # Приватные методы --------------------------------------------------------
+    # ------------------------------------------------------------------
+    # ПРОВЕРКА РАЗРЕШЁННОЙ ГРУППЫ (только для GR 1–4)
+    # ------------------------------------------------------------------
     def _validate_group(self, gri):
-        """Проверяет, разрешена ли данная группа деталей на рабочем месте."""
+        """Возвращает True, если группа детали разрешена на рабочем месте."""
         app = self.app
         if app.gr in (1, 2, 3, 4) and gri not in app.allowed_gri:
             group_names = {GRI_FRAME: 'РАМЫ', GRI_SASH: 'СТВОРКИ'}
-            allowed_names = ', '.join(group_names.get(g, g)
-                                        for g in app.allowed_gri)
+            allowed_names = ', '.join(group_names.get(g, g) or g in app.allowed_gri)
             if not allowed_names:
                 allowed_names = "не разрешена регистрация деталей"
             app.notify(f"На данном рабочем месте разрешена регистрация "
-                        f"только {allowed_names}, а вы сканируете "
-                        f"{group_names.get(gri, gri)}.", level='warn')
+                       f"только {allowed_names}, а вы сканируете "
+                       f"{group_names.get(gri, gri)}.", level='warn')
             app.conn.rollback()
             app.ui.clear_detal_info()
             return False
         return True
 
+    # ------------------------------------------------------------------
+    # ОБРАБОТКА «ЭТА ДЕТАЛЬ УЖЕ ОТКРЫТА НА ЭТОМ IP»
+    # ------------------------------------------------------------------
     def _handle_registered(self, detal, detal_info, bci, gri):
-        """Показывает информацию о детали, которая уже зарегистрирована."""
+        """
+        Срабатывает, когда оператор повторно сканирует ту же деталь,
+        у которой уже есть открытая сессия на этом IP.
+        Показывает 🔴 попап, обновляет блок информации и картинку.
+        """
         app = self.app
         app.notify(f"Деталь {detal} (ZAKNUM:{detal_info['zaknum']}) уже "
-                    f"зарегистрирована на {app.workplace_name}.", level='warn')
+                   f"зарегистрирована на {app.workplace_name}.", level='warn')
         app.conn.rollback()
+        self._show_detal_info(detal_info, bci, gri)
 
+    # ------------------------------------------------------------------
+    # ПРОВЕРКА ДУБЛИКАТА ПО BCI (единая для ВСЕХ групп)
+    # ------------------------------------------------------------------
+    def _check_duplicate(self, bci, gri, detal):
+        """
+        Проверяет, есть ли на текущем IP другая открытая деталь
+        того же изделия (BCI).
+
+        Единая проверка для всех GR (1–6): только по BCI.
+        Ранее для GR 1–4 проверялось BCI + GRI — это убрано.
+
+        Возвращает True, если дубликат найден.
+        """
+        app = self.app
+        return dbm.has_open_detal_session_for_bci(
+            app.cursor, bci, app.current_ip, exclude_detal=detal
+        )
+
+    # ------------------------------------------------------------------
+    # ОТОБРАЖЕНИЕ ИНФОРМАЦИИ О ДЕТАЛИ + КАРТИНКИ
+    # ------------------------------------------------------------------
+    def _show_detal_info(self, detal_info, bci, gri):
+        """
+        Обновляет блок «Информация о детали» и картинку конструкции.
+
+        Используется:
+          • при успешной регистрации;
+          • при повторном сканировании той же детали (_handle_registered);
+          • при отказе из-за дубликата изделия (BCI).
+
+        Для GR 5–6 габариты берутся по раме, при её отсутствии — по створке;
+        тип в интерфейсе принудительно — «Изделие».
+        Для GR 1–4 — по группе самой детали.
+        """
+        app = self.app
         if app.gr in (5, 6):
             dims = dbm.get_dimensions_and_perimeter_area_for_bci_gri(
                 app.cursor, bci, GRI_FRAME
@@ -908,32 +970,11 @@ class DetalProcessor:
             app.ui.set_detal_info(detal_info, *dims)
         app.images.update(detal_info['zaknum'], detal_info['konid'])
 
-    def _check_duplicate(self, detal, detal_info):
-        """
-        Проверяет, есть ли уже открытая сессия на изделие с данным BCI
-        на текущем IP.
-
-        Для ВСЕХ групп (GR 1–6) проверка выполняется ТОЛЬКО по BCI.
-        GRI в проверке дублирования НЕ участвует (GRI используется
-        в других проверках: разрешённая группа, тип детали, расчёт габаритов).
-
-        Возвращает (is_duplicate, message).
-        Текст сообщения: «Изделие ZAKNUM (KONNAME) уже зарегистрировано на Z».
-        """
-        app = self.app
-        bci     = detal_info['bci']
-        zaknum  = detal_info.get('zaknum', '')
-        konname = detal_info.get('konname', '')
-
-        dup = dbm.has_open_detal_session_for_bci(
-            app.cursor, bci, app.current_ip, exclude_detal=detal
-        )
-        msg = (f"Изделие {zaknum} ({konname}) уже зарегистрировано "
-                f"на {app.workplace_name}")
-        return dup, msg
-
+    # ------------------------------------------------------------------
+    # РАСЧЁТ ГАБАРИТОВ + РЕГИСТРАЦИЯ
+    # ------------------------------------------------------------------
     def _register(self, detal, detal_info, bci, gri):
-        """Регистрирует деталь и обновляет интерфейс."""
+        """Вычисляет габариты, вставляет запись в DETAL_TIME, обновляет UI."""
         app = self.app
 
         if app.gr in (5, 6):
@@ -955,30 +996,32 @@ class DetalProcessor:
         if width_mm is None or height_mm is None:
             if app.gr in (5, 6):
                 msg = ("Не удалось определить габариты изделия "
-                        "(нет ни рамы, ни створки с ORIENT='Н' или 'П').")
+                       "(нет ни рамы, ни створки с ORIENT='В' или 'П').")
             else:
-                msg = "Не удалось определить габариты изделия (нет ORIENT='Н' или 'П')."
+                msg = ("Не удалось определить габариты изделия "
+                       "(нет ORIENT='В' или 'П').")
             app.notify(msg, level='error')
             app.conn.rollback()
             return
 
         dbm.create_detal_session(app.cursor, detal, app.current_ip, app.gr,
-                                bci, gri, perimeter, area)
+                                 bci, gri, perimeter, area)
         app.conn.commit()
         log_message(f"Деталь {detal} зарегистрирована на IP {app.current_ip} "
                     f"(BCI={bci}, GRI={gri})")
 
         app.ui.set_detal_info(detal_info, width_mm, height_mm, perimeter, area,
-                                override_type=override_type)
+                              override_type=override_type)
         app.images.update(detal_info['zaknum'], detal_info['konid'])
         app.notify(f"Зарегистрировано изделие\n"
-                    f"Заказ: {detal_info['zaknum']}\n"
-                    f"Конструкция: {detal_info['konname']}",
-                    timeout=3000)
+                   f"Заказ: {detal_info['zaknum']}\n"
+                   f"Конструкция: {detal_info['konname']}",
+                   timeout=3000)
         app.workers.update_list()
         app.stats.update()
 
 # InputHandler — обработка сканера =================================================
+# ==================================================================================
 class InputHandler:
     """Обработчики событий ввода: клики, потеря фокуса, сканирование."""
 

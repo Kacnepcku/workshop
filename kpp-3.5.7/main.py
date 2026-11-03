@@ -36,7 +36,9 @@ else:
     sys.exit(0)
 
 # Параметры подключения к БД ========================================================
-if subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip() == "cybstation":
+if subprocess.run(["hostname"], 
+        capture_output=True, 
+        text=True).stdout.strip() == "cybstation":
     DB_HOST = "192.168.88.200"
 else:
     DB_HOST = "192.168.0.10"

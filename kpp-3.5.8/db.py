@@ -7,6 +7,7 @@ db.py — функции для работы с базой данных MySQL.
 Все запросы выполняются через переданный cursor.
 Commit/rollback делает вызывающая сторона.
 """
+import math    # ← для расчёта площади полукруга
 
 # Сотрудники и рабочие места ======================================================
 def get_worker_fio(cursor, rab):
@@ -169,50 +170,113 @@ def has_open_detal_session_for_bci(cursor, bci, ip, exclude_detal=None):
 
 def get_dimensions_and_perimeter_area_for_bci_gri(cursor, bci, gri=None):
     """
+    !!!!!!!!!!!! ВНИАНИЕ 'В' 'П' 'Н' ЭТО КИРИЛЛИЦА !!!!!!!!!!!!!!!!!!!!!!!!!!!
+
     Возвращает (ширина_мм, высота_мм, периметр_м, площадь_м2) для BCI и группы.
 
+    ─── Прямоугольное изделие ───
+    • ширина  = длина детали ORIENT='В' (верхняя рама/створка)
+    • высота  = длина детали ORIENT='П' (правая боковая)
+    • периметр = 2 × (w + h)
+    • площадь  = w × h
+
+    ─── Полукруглое изделие ───
+    Условие: нет ORIENT='П', но есть верхняя деталь с DUGA=1 и есть ORIENT='Н'.
+    • периметр = L(Н) + L(В)
+    • площадь  = L(Н)² × π / 8
+    • возвращаем (L(Н), L(В), периметр, площадь) —
+        в UI «ширина» = основание, «высота» = дуга.
+
+    Из каждой длины вычитается 6 мм, потом перевод в метры.
+
     Если gri не задан — сначала ищет раму (GRI='r'), затем створку (GRI='s').
-    Другие группы игнорируются.
     """
-    def _calc(width_mm, height_mm):
-        """Внутренняя функция: считает периметр и площадь по габаритам."""
+
+    # ---------- БЛОК РАСЧЁТА: прямоугольник ----------
+    def _calc_rect(width_mm, height_mm):
         w_m = (width_mm - 6) / 1000.0
         h_m = (height_mm - 6) / 1000.0
         return width_mm, height_mm, 2 * (w_m + h_m), w_m * h_m
 
+    # ---------- БЛОК РАСЧЁТА: полукруг ----------
+    def _calc_arc(bottom_mm, top_mm):
+        """
+        Полукруг:
+            периметр = L(Н) + L(В)              [в метрах после −6 мм]
+            площадь  = L(Н)² × π / 8            [в м² после −6 мм]
+        Для UI: width_mm = L(Н), height_mm = L(В).
+        """
+        lb_m = (bottom_mm - 6) / 1000.0
+        lt_m = (top_mm - 6) / 1000.0
+        perimeter = lb_m + lt_m
+        area = (lb_m ** 2) * math.pi / 8
+        return bottom_mm, top_mm, perimeter, area
+
+    # ---------- Проверка DUGA=1 (учитывает None / '1' / 1 / '\N') ----------
+    def _is_duga(duga):
+        if duga is None:
+            return False
+        try:
+            return int(duga) == 1
+        except (ValueError, TypeError):
+            return False
+
+    # ---------- Запрос: берём все три ориентации + DUGA ----------
     def _query(where_gri_clause, params):
         """
-        Выполняет запрос и возвращает (width_mm, height_mm).
-        where_gri_clause — безопасный литерал (либо "GRI = %s", либо "GRI = 'r'").
+        Возвращает (width_mm, height_mm, bottom_mm, top_duga).
+        width_mm  — L(В)
+        height_mm — L(П)
+        bottom_mm — L(Н)
+        top_duga  — True, если у верхней детали DUGA=1
         """
         cursor.execute(
-            "SELECT ORIENT, LENGTH FROM CCALC "
-            f"WHERE BCI = %s AND {where_gri_clause} AND ORIENT IN ('В', 'П')",
+            "SELECT ORIENT, LENGTH, DUGA FROM CCALC "
+            f"WHERE BCI = %s AND {where_gri_clause} "
+            "AND ORIENT IN ('В', 'П', 'Н')",
             params
         )
-        width_mm = height_mm = None
-        for orient, length in cursor.fetchall():
-            if orient == 'В':       #! ← верхняя рама = ширина ('В' это кирилица)
+        width_mm = height_mm = bottom_mm = None
+        top_duga = False
+        for orient, length, duga in cursor.fetchall():
+            if orient == 'В':
                 width_mm = length
-            elif orient == 'П':     #! ← правая рама = высота
+                if _is_duga(duga):
+                    top_duga = True
+            elif orient == 'П':
                 height_mm = length
-        return width_mm, height_mm
+            elif orient == 'Н':
+                bottom_mm = length
+        return width_mm, height_mm, bottom_mm, top_duga
 
-    if gri is not None:
-        width_mm, height_mm = _query("GRI = %s", (bci, gri))
+    # ---------- Общая логика выбора формулы ----------
+    def _compute(where_gri_clause, params):
+        width_mm, height_mm, bottom_mm, top_duga = _query(where_gri_clause, params)
+
+        # 1) Прямоугольник: есть и верх, и право
         if width_mm is not None and height_mm is not None:
-            return _calc(width_mm, height_mm)
+            return _calc_rect(width_mm, height_mm)
+
+        # 2) Полукруг: нет права, но верх с DUGA=1 и есть низ
+        if top_duga and width_mm is not None and bottom_mm is not None:
+            return _calc_arc(bottom_mm, width_mm)
+
+        # 3) Иначе данных недостаточно
         return None, None, None, None
 
-    # Сначала рама
-    width_mm, height_mm = _query("GRI = 'r'", (bci,))
-    if width_mm is not None and height_mm is not None:
-        return _calc(width_mm, height_mm)
+    # ---------- Явно указанная группа (для GR 1–4) ----------
+    if gri is not None:
+        result = _compute("GRI = %s", (bci, gri))
+        return result if result[0] is not None else (None, None, None, None)
 
-    # Если рамы нет — пробуем створку
-    width_mm, height_mm = _query("GRI = 's'", (bci,))
-    if width_mm is not None and height_mm is not None:
-        return _calc(width_mm, height_mm)
+    # ---------- Группа не указана (для GR 5–6): рама → створка ----------
+    result = _compute("GRI = 'r'", (bci,))
+    if result[0] is not None:
+        return result
+
+    result = _compute("GRI = 's'", (bci,))
+    if result[0] is not None:
+        return result
 
     return None, None, None, None
 

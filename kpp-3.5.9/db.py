@@ -198,7 +198,7 @@ def has_open_detal_session_for_bci(cursor, bci, ip, exclude_detal=None):
 
 def get_dimensions_and_perimeter_area_for_bci_gri(cursor, bci, gri=None):
     """
-    !!!!!!!!!!!! ВНИАНИЕ 'В' 'П' 'Н' ЭТО КИРИЛЛИЦА !!!!!!!!!!!!!!!!!!!!!!!!!!!
+    !!! ВНИМАНИЕ 'В' 'П' 'Н' ЭТО КИРИЛИЦА !!!
 
     Возвращает (ширина_мм, высота_мм, периметр_м, площадь_м2) для BCI и группы.
 

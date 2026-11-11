@@ -139,21 +139,25 @@ class ConnectionManager:
         self.dialog = dialog
         return dialog
 
+    def _connect(self):
+        """Создаёт новое подключение к БД с короткими таймаутами."""
+        return pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            charset=DB_CHARSET,
+            autocommit=False,
+            connect_timeout=3,
+            read_timeout=5,
+            write_timeout=5,
+        )
+
     def attempt_connection(self):
-        """
-        Пытается подключиться к БД; при ошибке повторяет через RECONNECT_MS.
-        Текст ошибки пишется только в лог, окно не изменяется.
-        """
+        """Первичное подключение при старте программы."""
         app = self.app
         try:
-            app.conn = pymysql.connect(
-                host=DB_HOST,
-                user=DB_USER,
-                password=DB_PASSWORD,
-                database=DB_NAME,
-                charset=DB_CHARSET,
-                autocommit=False,
-            )
+            app.conn = self.connect()
             app.cursor = app.conn.cursor()
             log_message("Подключение к БД успешно")
 
@@ -162,14 +166,48 @@ class ConnectionManager:
                 self.dialog.destroy()
                 self.dialog = None
 
-            # Ссылка на старое поле ввода недействительна — сбрасываем.
-            # Новый entry будет создан в UIBuilder._create_input_panel.
             app.entry = None
-
             app.ui.build()
         except Exception as e:
             log_message(f"Ошибка подключения к БД: {e}")
             app.root.after(RECONNECT_MS, self.attempt_connection)
+
+    def ensure_connection(self, silent=False):
+        """
+        Проверяет активность соединения перед запросом.
+        При обрыве пытается переподключиться и обновляет app.cursor.
+        Возвращает True, если связь есть, иначе False.
+        """
+        app = self.app
+        try:
+            if app.conn is None:
+                app.conn = self._connect()
+                app.cursor = app.conn.cursor()
+                log_message("Соединение с БД восстановлено (новое подключение)")
+                return True
+
+            # Проверяем сокет без лишнего трафика; если мёртв — переподключаемся
+            app.conn.ping(reconnect=True)
+            # Гарантируем, что курсор привязан к актуальному соединению
+            app.cursor = app.conn.cursor()
+            return True
+        except Exception as e:
+            log_message(f"Потеряна связь с БД, переподключение не удалось: {e}")
+            if not silent:
+                app.notify("Потеряна связь с базой данных.\n"
+                            "Проверьте сеть и повторите сканирование.",
+                            level='error')
+            return False
+
+    def safe_rollback(self):
+        """Безопасный откат транзакции (не падает, если связь уже разорвана)."""
+        app = self.app
+        if app.conn is not None:
+            try:
+                # ??? app.connection.safe_rollback() ???
+                app.conn.rollback()
+            except Exception:
+                pass
 
 # UIBuilder — построение главного окна =============================================
 class UIBuilder:
@@ -537,7 +575,7 @@ class WorkerSessionManager:
             if fio is None:
                 app.notify(f"Работник с кодом {rab} не найден в базе.",
                             level='error')
-                app.conn.rollback()
+                app.connection.safe_rollback()
                 return
 
             # Если у сотрудника осталась незакрытая сессия со вчерашнего дня
@@ -556,7 +594,7 @@ class WorkerSessionManager:
 
             self.update_list()
         except Exception as e:
-            app.conn.rollback()
+            app.connection.safe_rollback()
             app.notify(f"Ошибка обработки сотрудника: {e}", level='error')
 
     def close_previous(self, rab=None, silent=False):
@@ -603,7 +641,7 @@ class WorkerSessionManager:
             elif not silent and app.entry is not None:
                 app.entry.focus_set()
         except Exception as e:
-            app.conn.rollback()
+            app.connection.safe_rollback()
             app.notify(f"Не удалось закрыть предыдущие сессии сотрудников: {e}",
                         level='error')
 
@@ -632,7 +670,7 @@ class WorkerSessionManager:
                         f"{app.workplace_name}")
             self.update_list()
         except Exception as e:
-            app.conn.rollback()
+            app.connection.safe_rollback()
             app.notify(f"Ошибка закрытия сессий: {e}", level='error')
 
     def update_list(self):
@@ -662,8 +700,9 @@ class WorkerSessionManager:
 
     def auto_update(self):
         """Автоматическое обновление списка сотрудников раз в минуту."""
-        self.close_previous(silent=True)
-        self.update_list()
+        if self.app.connection.ensure_connection(silent=True):
+            self.close_previous(silent=True)
+            self.update_list()
         self.app.root.after(AUTO_UPDATE_MS, self.auto_update)
 
     def check_idle_and_poweroff(self):
@@ -689,6 +728,10 @@ class WorkerSessionManager:
 
             # До 17:00 ничего не проверяем
             if now.hour < IDLE_AFTER_HOUR:
+                app.root.after(IDLE_CHECK_MS, self.check_idle_and_poweroff)
+                return
+
+            if not app.connection.ensure_connection(silent=True):
                 app.root.after(IDLE_CHECK_MS, self.check_idle_and_poweroff)
                 return
 
@@ -761,14 +804,14 @@ class WorkerSessionManager:
 
         info = dbm.get_workplace_info(app.cursor, app.current_ip)
         if info is None:
-            app.conn.rollback()
+            app.connection.safe_rollback()
             app.notify("Текущее рабочее место не найдено.", level='error')
             return
 
         name, max_cur, _ = info
         cur_cur = dbm.get_occupied_count(app.cursor, app.current_ip)
         if cur_cur >= max_cur:
-            app.conn.rollback()
+            app.connection.safe_rollback()
             app.notify(f"Место '{name}' заполнено (занято {cur_cur} из "
                         f"{max_cur}). Перемещение невозможно.", level='warn')
             return
@@ -788,14 +831,14 @@ class WorkerSessionManager:
 
         info = dbm.get_workplace_info(app.cursor, app.current_ip)
         if info is None:
-            app.conn.rollback()
+            app.connection.safe_rollback()
             app.notify("Текущее рабочее место не найдено.", level='error')
             return
 
         name, max_cur, _ = info
         cur_cur = dbm.get_occupied_count(app.cursor, app.current_ip)
         if cur_cur >= max_cur:
-            app.conn.rollback()
+            app.connection.safe_rollback()
             app.notify(f"Место '{name}' заполнено (занято {cur_cur} из "
                         f"{max_cur}). Регистрация невозможна.", level='warn')
             return
@@ -825,7 +868,7 @@ class DetalProcessor:
             detal_info = dbm.get_detal_full_info(app.cursor, detal)
             if detal_info is None:
                 app.notify(f"Деталь с кодом {detal} не найдена.", level='error')
-                app.conn.rollback()
+                app.connection.safe_rollback()
                 app.ui.clear_detal_info()
                 return
 
@@ -836,7 +879,7 @@ class DetalProcessor:
             if gri == GRI_IMPOST:
                 app.notify("Для регистрации отсканируйте деталь рамы или "
                             "створки. Импост не регистрируется.", level='warn')
-                app.conn.rollback()
+                app.connection.safe_rollback()
                 app.ui.clear_detal_info()
                 return
 
@@ -853,12 +896,12 @@ class DetalProcessor:
             dup, dup_msg = self._check_duplicate(bci, gri, detal)
             if dup:
                 app.notify(dup_msg, level='warn')
-                app.conn.rollback()
+                app.connection.safe_rollback()
                 return
 
             self._register(detal, detal_info, bci, gri)
         except Exception as e:
-            app.conn.rollback()
+            app.connection.safe_rollback()
             app.notify(f"Ошибка обработки детали: {e}", level='error')
 
     # Приватные методы --------------------------------------------------------
@@ -874,7 +917,7 @@ class DetalProcessor:
             app.notify(f"На данном рабочем месте разрешена регистрация "
                         f"только {allowed_names}, а вы сканируете "
                         f"{group_names.get(gri, gri)}.", level='warn')
-            app.conn.rollback()
+            app.connection.safe_rollback()
             app.ui.clear_detal_info()
             return False
         return True
@@ -884,7 +927,7 @@ class DetalProcessor:
         app = self.app
         app.notify(f"Деталь {detal} (ZAKNUM:{detal_info['zaknum']}) уже "
                     f"зарегистрирована на {app.workplace_name}.", level='warn')
-        app.conn.rollback()
+        app.connection.safe_rollback()
 
         if app.gr in (5, 6):
             dims = dbm.get_dimensions_and_perimeter_area_for_bci_gri(
@@ -951,7 +994,7 @@ class DetalProcessor:
             else:
                 msg = "Не удалось определить габариты изделия (нет ORIENT='Н' или 'П')."
             app.notify(msg, level='error')
-            app.conn.rollback()
+            app.connection.safe_rollback()
             return
 
         dbm.create_detal_session(app.cursor, detal, app.current_ip, app.gr,
@@ -1003,18 +1046,12 @@ class InputHandler:
             app.entry.focus_set()
             return
 
-        # До установки соединения разрешён только код выключения
-        if app.conn is None or app.cursor is None:
+        # Основная логика после первичного подключения
+        if not app.connection.ensure_connection(silent=False):
             if code == CODE_POWEROFF:
                 app.on_closing()
-            else:
-                app.notifier.show_auto_message("Нет подключения к БД.",
-                                                "Ожидание", 3000,
-                                                msg_type='error')
-                app.entry.focus_set()
             return
 
-        # Основная логика после подключения
         if code == CODE_POWEROFF:
             app.workers.close_all()
             app.on_closing()
@@ -1083,6 +1120,9 @@ class Application:
         """Закрывает соединение с БД и выключает компьютер."""
         log_message("=== Завершение программы ===")
         if self.conn:
-            self.conn.close()
+            try:
+                self.conn.close()
+            except Exception:
+                pass
         os.system(f"{power_off}")
         self.root.destroy()

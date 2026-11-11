@@ -157,7 +157,7 @@ class ConnectionManager:
         """Первичное подключение при старте программы."""
         app = self.app
         try:
-            app.conn = self.connect()
+            app.conn = self._connect()
             app.cursor = app.conn.cursor()
             log_message("Подключение к БД успешно")
 

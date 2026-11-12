@@ -142,8 +142,8 @@ class ConnectionManager:
         self.dialog = dialog
         return dialog
 
-    def _is_port_open(self, timeout=0.4):
-        """Быстрая проверка доступности сервера БД по TCP (не зависает при обрыве)."""
+    def _is_port_open(self, timeout=0.5):
+        """Быстрая проверка доступности сервера БД по TCP."""
         try:
             with socket.create_connection((DB_HOST, 3306), timeout=timeout):
                 return True
@@ -151,7 +151,7 @@ class ConnectionManager:
             return False
 
     def _connect(self):
-        """Создаёт новое подключение к БД с короткими таймаутами."""
+        """Создаёт новое подключение к БД."""
         return pymysql.connect(
             host=DB_HOST,
             user=DB_USER,
@@ -159,73 +159,60 @@ class ConnectionManager:
             database=DB_NAME,
             charset=DB_CHARSET,
             autocommit=False,
-            connect_timeout=2,
-            read_timeout=2,
-            write_timeout=2,
+            connect_timeout=3,
+            read_timeout=5,
+            write_timeout=5,
         )
 
-    def attempt_connection(self):
-        """Первичное подключение при старте программы."""
+    def drop_connection(self):
+        """Мгновенно уничтожает старый объект соединения без отправки сетевых пакетов."""
         app = self.app
-        try:
-            app.conn = self._connect()
-            app.cursor = app.conn.cursor()
-            log_message("Подключение к БД успешно")
-
-            # Закрываем диалог подключения
-            if self.dialog:
-                self.dialog.destroy()
-                self.dialog = None
-
-            app.entry = None
-            app.ui.build()
-        except Exception as e:
-            log_message(f"Ошибка подключения к БД: {e}")
-            app.root.after(RECONNECT_MS, self.attempt_connection)
+        if app.conn is not None:
+            try:
+                app.conn.force_close()
+            except Exception:
+                pass
+        app.conn = None
+        app.cursor = None
 
     def ensure_connection(self, silent=False):
         """
         Проверяет активность соединения перед запросом.
-        При обрыве пытается переподключиться и обновляет app.cursor.
-        Возвращает True, если связь есть, иначе False.
+        Если соединение мертво — принудительно закрывает его и создаёт новое.
         """
         app = self.app
 
-        # 1. Быстрая проверка порта (0.4 сек) — не даёт зависнуть на мёртвом сокете
-        if not self._is_port_open(timeout=0.4):
+        # 1. Быстрая проверка сети (0.5 сек)
+        if not self._is_port_open(timeout=0.5):
+            self.drop_connection()
             app.update_status_indicator(db_ok=False)
-            if app.conn is not None:
-                try:
-                    app.conn.close()
-                except Exception:
-                    pass
-                app.conn = None
-                app.cursor = None
-
-            log_message("Потеряна связь с БД (сервер недоступен по сети)")
+            log_message("Потеряна связь с БД (TCP-порт 3306 недоступен)")
             if not silent:
                 app.notify("Потеряна связь с базой данных.\n"
                             "Проверьте сеть и повторите сканирование.",
                             level='error')
             return False
 
-        # 2. Сеть есть — проверяем или пересоздаём сессию MySQL
-        try:
-            if app.conn is None:
-                app.conn = self._connect()
-                app.cursor = app.conn.cursor()
-                log_message("Соединение с БД восстановлено (новое подключение)")
+        # 2. Если уже есть открытое соединение — проверяем его пингом без автореконнекта
+        if app.conn is not None:
+            try:
+                app.conn.ping(reconnect=False)
                 app.update_status_indicator(db_ok=True)
                 return True
+            except Exception as e:
+                log_message(f"Старая сессия БД не отвечает ({e}), переподключаемся...")
+                self.drop_connection()
 
-            app.conn.ping(reconnect=True)
+        # 3. Создаём свежее подключение с нуля
+        try:
+            app.conn = self._connect()
             app.cursor = app.conn.cursor()
+            log_message("Соединение с БД успешно восстановлено")
             app.update_status_indicator(db_ok=True)
             return True
         except Exception as e:
+            self.drop_connection()
             app.update_status_indicator(db_ok=False)
-            app.conn = None
-            app.cursor = None
             log_message(f"Потеряна связь с БД, переподключение не удалось: {e}")
             if not silent:
                 app.notify("Потеряна связь с базой данных.\n"
@@ -234,13 +221,13 @@ class ConnectionManager:
             return False
 
     def safe_rollback(self):
-        """Безопасный откат транзакции (не падает и не виснет, если связь оборвана)."""
+        """Безопасный откат транзакции."""
         app = self.app
         if app.conn is not None and self._is_port_open(timeout=0.3):
             try:
                 app.conn.rollback()
             except Exception:
-                pass
+                self.drop_connection()
 
 # UIBuilder — построение главного окна =============================================
 # ==================================================================================
@@ -1206,9 +1193,19 @@ class Application:
         self.status_canvas.update_idletasks()
 
     def monitor_status(self):
-        """Фоновая проверка сети, БД и папки JPG в 5 секунд."""
+        """Фоновая проверка состояния сети, БД и папки картинок каждые 5 секунд."""
         db_alive = self.connection._is_port_open(timeout=0.4)
-        self.update_status_indicator(db_ok=db_alive)
+        if not db_alive:
+            # Сеть упала — сразу сбрасываем мёртвый сокет MySQL
+            self.connection.drop_connection()
+            self.update_status_indicator(db_ok=False)
+        else:
+            # Сеть есть: если соединение было сброшено во время обрыва — поднимаем его
+            if self.conn is None:
+                self.connection.ensure_connection(silent=True)
+            else:
+                self.update_status_indicator(db_ok=True)
+
         self.root.after(RECONNECT_MS, self.monitor_status)
 
     # Прокси для удобства вызова из менеджеров --------------------------------

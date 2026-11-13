@@ -164,8 +164,36 @@ class ConnectionManager:
             write_timeout=5,
         )
 
+    def attempt_connection(self):
+        """Первичное подключение при старте программы."""
+        app = self.app
+
+        if not self._is_port_open(timeout=0.5):
+            log_message(f"БД ({DB_HOST}:3306) недоступна, повтор через {RECONNECT_MS // 1000} сек.")
+            if self.conn_label and self.conn_label.winfo_exists():
+                self.conn_label.config(text=f"Нет связи с БД ({DB_HOST})...")
+            app.root.after(RECONNECT_MS, self.attempt_connection)
+            return
+
+        try:
+            app.conn = self._connect()
+            app.cursor = app.conn.cursor()
+            log_message("Подключение к БД успешно")
+
+            # Закрываем диалог подключения
+            if self.dialog:
+                self.dialog.destroy()
+                self.dialog = None
+                self.conn_label = None
+
+            app.entry = None
+            app.ui.build()
+        except Exception as e:
+            log_message(f"Ошибка подключения к БД: {e}")
+            app.root.after(RECONNECT_MS, self.attempt_connection)
+            
     def drop_connection(self):
-        """Мгновенно уничтожает старый объект соединения без отправки сетевых пакетов."""
+        """Уничтожает старый объект соединения без отправки сетевых пакетов."""
         app = self.app
         if app.conn is not None:
             try:
@@ -443,8 +471,6 @@ class UIBuilder:
         app.workers.auto_update()
         app.workers.check_idle_and_poweroff() # ! запуск цикла простоя
         self.clear_detal_info()
-        app.stats.update()
-        app.images.show_default()
         app.stats.update()
         app.images.show_default()
         app.monitor_status()

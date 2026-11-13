@@ -62,11 +62,7 @@ def _detect_local_ip_octet(target_host: str, target_port: int = 3306) -> int:
     except Exception:
         pass
 
-<<<<<<< HEAD
-    # Резервный вариант (как в исходном main.py)
-=======
     # Резервный вариант
->>>>>>> 123c5d6 (!!! Окончательное деление на модули !!!)
     try:
         out = subprocess.run(
             ["hostname", "-I"], capture_output=True, text=True, check=True

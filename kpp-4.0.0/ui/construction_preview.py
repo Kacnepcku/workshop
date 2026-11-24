@@ -911,6 +911,27 @@ def _find_hinge_segment(sash_bars, handle_bar, tname, napr, sx_min, sx_max, sy_m
     }.get(hinge_orient)
 
 
+def _canvas_draw_handle(canvas, px_h, py_h, is_horizontal, is_door):
+    """
+    Отрисовка ручки створки:
+      - окно: масштаб ×2 от базового (40 × 8 px), заливка чёрная (#000000);
+      - дверь: масштаб ×3 от базового (60 × 12 px), заливка тёмно-серая (#4b5563).
+    """
+    scale = 3.0 if is_door else 2.0
+    half_len = 10.0 * scale
+    half_thk = 2.0 * scale
+    fill_col = "#4b5563" if is_door else "#000000"
+
+    if is_horizontal:
+        x0, y0 = px_h - half_len, py_h - half_thk
+        x1, y1 = px_h + half_len, py_h + half_thk
+    else:
+        x0, y0 = px_h - half_thk, py_h - half_len
+        x1, y1 = px_h + half_thk, py_h + half_len
+
+    canvas.create_rectangle(x0, y0, x1, y1, fill=fill_col, outline="#0f172a", width=1.0)
+
+
 def _canvas_draw_hinges(canvas, p1_px, p2_px, count, is_door):
     if count <= 0:
         return
@@ -929,15 +950,27 @@ def _canvas_draw_hinges(canvas, p1_px, p2_px, count, is_door):
         t1 = 1.0 - t0
         ts = [0.5] if (count == 1 or t1 <= t0) else [t0 + i * (t1 - t0) / (count - 1) for i in range(count)]
 
-        for t in ts:
-            cx, cy = p1_px[0] + dx * t, p1_px[1] + dy * t
+        # Направления «вверх» вдоль оси петли и «влево» поперёк ширины
+        up_x, up_y = (ux, uy) if uy <= 0 else (-ux, -uy)
+        left_x, left_y = (nx, ny) if nx <= 0 else (-nx, -ny)
+
+        def _draw_door_rect(rcx, rcy):
             corners = (
-                cx - ux * half_len - nx * half_thk, cy - uy * half_len - ny * half_thk,
-                cx + ux * half_len - nx * half_thk, cy + uy * half_len - ny * half_thk,
-                cx + ux * half_len + nx * half_thk, cy + uy * half_len + ny * half_thk,
-                cx - ux * half_len + nx * half_thk, cy - uy * half_len + ny * half_thk,
+                rcx - ux * half_len - nx * half_thk, rcy - uy * half_len - ny * half_thk,
+                rcx + ux * half_len - nx * half_thk, rcy + uy * half_len - ny * half_thk,
+                rcx + ux * half_len + nx * half_thk, rcy + uy * half_len + ny * half_thk,
+                rcx - ux * half_len + nx * half_thk, rcy - uy * half_len + ny * half_thk,
             )
             canvas.create_polygon(*corners, fill="#1e293b", outline="#0f172a", width=1.0)
+
+        for t in ts:
+            cx, cy = p1_px[0] + dx * t, p1_px[1] + dy * t
+            # 1. Основной (нижний) прямоугольник петли
+            _draw_door_rect(cx, cy)
+            # 2. Копия сверху: на 1 px выше основного и на полширины (half_thk) левее
+            cx_top = cx + up_x * (2.0 * half_len + 1.0) + left_x * half_thk
+            cy_top = cy + up_y * (2.0 * half_len + 1.0) + left_y * half_thk
+            _draw_door_rect(cx_top, cy_top)
     else:
         half_len = min(min(12.0, max(7.0, seg_px * 0.064)), seg_px * 0.22)
         half_thk = 2.5
@@ -1338,11 +1371,12 @@ def draw_construction_on_canvas(canvas, data, active_barcode=None):
 
         if handle_bar:
             hp, hpoly, _hbase = handle_bar
-            px_h, py_h = to_px(sum(pt[0] for pt in hpoly) / len(hpoly), sum(pt[1] for pt in hpoly) / len(hpoly))
-            if clean_str(hp.get("ORIENT2")).upper() == "H":
-                canvas.create_line(px_h - 10, py_h, px_h + 10, py_h, fill="#dc2626", width=4.0, capstyle=tk.ROUND)
-            else:
-                canvas.create_line(px_h, py_h - 10, px_h, py_h + 10, fill="#dc2626", width=4.0, capstyle=tk.ROUND)
+            px_h, py_h = to_px(
+                sum(pt[0] for pt in hpoly) / len(hpoly),
+                sum(pt[1] for pt in hpoly) / len(hpoly),
+            )
+            is_h_handle = clean_str(hp.get("ORIENT2")).upper() == "H"
+            _canvas_draw_handle(canvas, px_h, py_h, is_horizontal=is_h_handle, is_door=is_door)
 
         hinge_seg = _find_hinge_segment(sash_bars, handle_bar, tname, napr, sx_min, sx_max, sy_min, sy_max)
         if hinge_seg:
